@@ -27,48 +27,114 @@ def _require_env(key: str) -> str:
 METABASE_URL = _require_env("METABASE_URL")
 METABASE_API_KEY = _require_env("METABASE_API_KEY")
 
-# card_id của Question "Cohort ROAS + Revenue by Campain" (CDS Android)
-# Xác nhận qua qa_explore.ipynb — Question này KHÔNG nằm trong Dashboard,
-# nó là 1 Native SQL Question độc lập có các filter riêng.
-METABASE_CARD_ID_CDS_ANDROID = 81
-
 # ---------------------------------------------------------------------------
 # Adjust
 # ---------------------------------------------------------------------------
 ADJUST_API_TOKEN = _require_env("ADJUST_API_TOKEN")
-ADJUST_APP_TOKEN_CDS_ANDROID = _require_env("ADJUST_APP_TOKEN_CDS_ANDROID")
 
 ROAS_DAYS = ["d0", "d3", "d7", "d14", "d28"]
 
 # Đã xác nhận qua đối chiếu Revenue thô: Metabase mart tính Ad-only revenue (IAA),
 # nên dùng "roas_ad_cal"/"ad_revenue_total_cal" (KHÔNG dùng "roas_cal"/"all_revenue_total_cal"
-# — 2 biến thể đó là Total = IAA+IAP, sai phạm vi so sánh).
+# — 2 biến thể đó là Total = IAA+IAP, sai phạm vi so sánh). Giống nhau cho mọi game.
 ROAS_METRIC_PREFIX = "roas_ad_cal"
 REVENUE_METRIC_PREFIX = "ad_revenue_total_cal"
 
 # Danh sách metric cần fetch từ Adjust — đủ cho cả ROAS, Revenue, Cost, Installs.
-ADJUST_METRICS_CDS_ANDROID = (
+# Giống nhau cho mọi game (chỉ app_token và extra_params khác nhau theo game).
+ADJUST_METRICS = (
     ["installs", "network_cost"]
     + [f"{ROAS_METRIC_PREFIX}_{d}" for d in ROAS_DAYS]
     + [f"{REVENUE_METRIC_PREFIX}_{d}" for d in ROAS_DAYS]
 )
 
-# Các param filter Adjust đã xác nhận khớp đúng với Template dashboard
-# và với số liệu Metabase (xem lịch sử debug trong docs/reconciliation.md):
-#   - cohort_maturity=mature   : Adjust trả 0/NULL cho cohort chưa mature thay vì
-#                                 carry-forward, giảm bớt (không thay thế hoàn toàn)
-#                                 nhu cầu tự tính Cohort Age phía dưới
-#   - ad_spend_mode=network    : khớp Cost 100% với mart (không dùng "mixed")
-#   - reattributed=false       : khớp filter UI "Attribution status: Installed"
-#     -> đây là nguyên nhân chính từng gây lệch ROAS gần gấp đôi khi bỏ sót
-#   - ad_revenue_sources       : giới hạn đúng nguồn AppLovin MAX, khớp UI dashboard
-ADJUST_EXTRA_PARAMS_CDS_ANDROID = {
+# Param filter Adjust mặc định — áp dụng cho mọi game trừ khi override riêng
+# trong GAMES[...]["adjust_extra_params"] bên dưới. Xem docs/reconciliation.md
+# để biết lý do chọn từng param (đã xác nhận qua debug thực tế với Game A):
+#   - cohort_maturity=mature : Adjust trả 0/NULL cho cohort chưa mature thay vì
+#                               carry-forward
+#   - ad_spend_mode=network  : khớp Cost 100% với mart (Game A)
+#   - reattributed=false     : khớp filter UI "Attribution status: Installed" —
+#                               thiếu param này từng gây ROAS lệch gần gấp đôi
+_ADJUST_EXTRA_PARAMS_DEFAULT = {
     "cohort_maturity": "mature",
     "ad_spend_mode": "network",
-    "network__in": "ALV",
-    "ad_revenue_sources": "AppLovin Max",
     "reattributed": "false",
 }
+
+# ---------------------------------------------------------------------------
+# Registry 4 game — THÊM/SỬA game ở đây khi cần, KHÔNG sửa ở notebook.
+# Chọn game nào chạy cho lần này -> sửa trong run_config.py (không sửa file này).
+# ---------------------------------------------------------------------------
+GAMES = {
+    "game_a_android": {
+        "label": "Game A (CDS) — Android",
+        "adjust_app_token_env": "ADJUST_APP_TOKEN_CDS_ANDROID",
+        # card_id của Question "Cohort ROAS + Revenue by Campain" — Native SQL
+        # Question độc lập (không nằm trong Dashboard), đã xác nhận qua qa_explore.ipynb.
+        "metabase_card_id": 81,
+        "metabase_game": ["Game A"],
+        "metabase_platform": ["ANDROID"],
+        "adjust_extra_params": {
+            **_ADJUST_EXTRA_PARAMS_DEFAULT,
+            "network__in": "ALV",
+            "ad_revenue_sources": "AppLovin Max",
+        },
+    },
+    "game_b_ios": {
+        "label": "Game B (CDS) — iOS",
+        "adjust_app_token_env": "ADJUST_APP_TOKEN_CDS_IOS",
+        # TODO: xác nhận lại card_id đúng cho Game B iOS — tạm dùng chung Question
+        # 81 nếu mart/Question phục vụ chung nhiều game qua filter {{game}}/{{platform}}.
+        # Nếu Game B có Question riêng, đổi số này.
+        "metabase_card_id": 81,
+        "metabase_game": ["Game B"],
+        "metabase_platform": ["IOS"],
+        # TODO: xác nhận lại network__in/ad_revenue_sources cho Game B — tạm copy
+        # theo Game A, CHƯA được verify qua đối chiếu thực tế như Game A.
+        "adjust_extra_params": {
+            **_ADJUST_EXTRA_PARAMS_DEFAULT,
+            "network__in": "ALV",
+            "ad_revenue_sources": "AppLovin Max",
+        },
+    },
+    "game_c_android": {
+        "label": "Game C (BCE) — Android",
+        "adjust_app_token_env": "ADJUST_APP_TOKEN_BCE_ANDROID",
+        # TODO: xác nhận card_id đúng cho Game C — Game C có thể không dùng chung
+        # mart/Question với Game A/B (tên game khác "CDS"), CẦN kiểm tra lại.
+        "metabase_card_id": 81,
+        "metabase_game": ["Game C"],
+        "metabase_platform": ["ANDROID"],
+        "adjust_extra_params": {
+            **_ADJUST_EXTRA_PARAMS_DEFAULT,
+            "network__in": "ALV",
+            "ad_revenue_sources": "AppLovin Max",
+        },
+    },
+    "game_c_ios": {
+        "label": "Game C (BCE) — iOS",
+        "adjust_app_token_env": "ADJUST_APP_TOKEN_BCE_IOS",
+        "metabase_card_id": 81,  # TODO: xác nhận lại, xem ghi chú ở game_c_android
+        "metabase_game": ["Game C"],
+        "metabase_platform": ["IOS"],
+        "adjust_extra_params": {
+            **_ADJUST_EXTRA_PARAMS_DEFAULT,
+            "network__in": "ALV",
+            "ad_revenue_sources": "AppLovin Max",
+        },
+    },
+}
+
+
+def get_adjust_app_token(game_key: str) -> str:
+    """Đọc token đúng game từ .env — chỉ đọc khi thực sự cần (lazy), để không bắt
+    buộc phải khai báo đủ token của cả 4 game nếu 1 lần chạy chỉ dùng 1 game."""
+    if game_key not in GAMES:
+        raise KeyError(f"game_key '{game_key}' không tồn tại trong config.GAMES. "
+                        f"Các game hợp lệ: {list(GAMES.keys())}")
+    env_key = GAMES[game_key]["adjust_app_token_env"]
+    return _require_env(env_key)
 
 # ---------------------------------------------------------------------------
 # Reconciliation / flagging
@@ -111,7 +177,7 @@ MATURITY_DAY_MAP = {**ROAS_DAY_MAP, **REVENUE_DAY_MAP}
 # Mốc "hôm nay" dùng để tính Cohort Age = DATA_ASOF_DATE - Cohort Date.
 # Để None -> tự lấy ngày hệ thống hiện tại. Đặt tường minh khi bạn muốn tái
 # lập lại đúng 1 lần chạy trong quá khứ (VD đối chiếu lại số liệu của 1 ngày cũ).
-DATA_ASOF_DATE = "2026-09-06"  # VD: "2026-09-06"
+DATA_ASOF_DATE = None  # VD: "2026-09-06"
 
 # True  -> tự động loại các ROAS_DX/REVENUE_DX mà cohort chưa đủ X ngày tuổi
 #          (tính theo Cohort Age) khỏi so sánh — tránh so sánh sai vì Adjust
