@@ -165,8 +165,9 @@ def plot_overall_discrepancy_bar(summary_overall: pd.DataFrame) -> None:
 # 5. Xu hướng theo thời gian
 # ---------------------------------------------------------------------------
 def plot_ratio_trend(detail: pd.DataFrame, metrics: list[str] | None = None) -> None:
-    """Line chart trung bình ratio (mb/adj) mỗi ngày, cho vài metric đại diện.
-    ratio=1 (đường nét đứt) nghĩa là khớp hoàn toàn."""
+    """[TOTAL — gộp mọi Campaign] Line chart trung bình ratio (mb/adj) mỗi ngày,
+    cho vài metric đại diện, gộp chung tất cả campaign. ratio=1 (đường nét đứt)
+    nghĩa là khớp hoàn toàn."""
     metrics = metrics or ["ROAS_D0", "REVENUE_D0", "INSTALLS"]
     valid = _valid(detail)
     trend = valid.groupby(["cohort_date", "metric"])["ratio"].mean().reset_index()
@@ -179,8 +180,51 @@ def plot_ratio_trend(detail: pd.DataFrame, metrics: list[str] | None = None) -> 
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="ratio = 1 (khớp hoàn toàn)")
     ax.set_ylabel("Trung bình ratio (mb/adj) trong ngày")
     ax.set_xlabel("Cohort Date")
-    ax.set_title("Xu hướng ratio (mb/adj) theo thời gian")
+    ax.set_title("Xu hướng ratio (mb/adj) theo thời gian — TOTAL (gộp mọi Campaign)")
     ax.legend()
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_ratio_trend_by_campaign(
+    detail: pd.DataFrame,
+    metric: str = "ROAS_D0",
+    campaigns: list[str] | None = None,
+) -> None:
+    """[THEO TỪNG CAMPAIGN] Line chart ratio (mb/adj) mỗi ngày, 1 đường/campaign,
+    cho ĐÚNG 1 metric — vẽ nhiều campaign x nhiều metric cùng lúc sẽ quá rối,
+    không đọc được. Đổi `metric` để xem metric khác (VD "COST", "REVENUE_D7").
+
+    `campaigns=None` -> vẽ tất cả campaign hiện có. Nếu có nhiều campaign
+    (>8), cân nhắc truyền danh sách cụ thể để biểu đồ không quá rối.
+    """
+    valid = _valid(detail)
+    valid = valid[valid["metric"] == metric]
+
+    if campaigns is None:
+        campaigns = sorted(valid["campaign"].unique())
+    if len(campaigns) > 8:
+        print(f"⚠️ CẢNH BÁO: đang vẽ {len(campaigns)} campaign cùng lúc, biểu đồ có thể rối. "
+              f"Cân nhắc truyền `campaigns=[...]` để giới hạn lại.")
+
+    trend = (
+        valid[valid["campaign"].isin(campaigns)]
+        .groupby(["cohort_date", "campaign"])["ratio"]
+        .mean()
+        .reset_index()
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for c in campaigns:
+        sub = trend[trend["campaign"] == c].sort_values("cohort_date")
+        if len(sub) > 0:
+            ax.plot(sub["cohort_date"], sub["ratio"], marker="o", markersize=3, label=c)
+    ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="ratio = 1 (khớp hoàn toàn)")
+    ax.set_ylabel("Trung bình ratio (mb/adj) trong ngày")
+    ax.set_xlabel("Cohort Date")
+    ax.set_title(f"Xu hướng ratio (mb/adj) theo thời gian — THEO CAMPAIGN — metric: {metric}")
+    ax.legend(loc="best", fontsize=8)
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
     plt.show()
