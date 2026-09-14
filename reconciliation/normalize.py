@@ -40,12 +40,12 @@ def normalize_adjust(df: pd.DataFrame) -> pd.DataFrame:
     out["campaign_key"] = out["campaign_network"]
     out["network_key"] = out["network"].apply(normalize_network).astype(str)
 
-    # Adjust trả metric dạng string — ép kiểu số, loại trừ tường minh network_key
-    # để tránh bug dtype float64 khi .apply() gặp DataFrame rỗng.
-    numeric_cols = [
-        c for c in out.columns
-        if c.startswith(("roas_", "network_", "installs", "ad_revenue_")) and c != "network_key"
-    ]
+    # Ép kiểu số cho MỌI cột trừ các cột biết chắc là text (dimension/join key).
+    # Đảo ngược so với cách cũ (liệt kê tiền tố "roas_"/"network_"/"installs"...)
+    # vì Adjust có thể trả về metric mới với tiền tố khác (VD "all_revenue_total_cal_dX"
+    # khi đổi revenue_scope sang "total") mà danh sách tiền tố cũ không lường trước được.
+    NON_NUMERIC_COLS = {"day", "network", "campaign_network", "date", "campaign_key", "network_key"}
+    numeric_cols = [c for c in out.columns if c not in NON_NUMERIC_COLS]
     for c in numeric_cols:
         out[c] = pd.to_numeric(out[c], errors="coerce")
     return out

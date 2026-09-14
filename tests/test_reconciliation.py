@@ -44,6 +44,8 @@ def _make_pair(mb_roas_d7=0.20, adj_roas_d7=0.21, cohort_date="2026-08-01",
         "network": [adj_network],
         "network_cost": [1000.0],
         "installs": [100],
+        # Test dùng scope "ad_only" (roas_ad_cal_*) — tách biệt với default "total"
+        # của config.GAMES, để test không phụ thuộc vào việc config đổi scope sau này.
         "roas_ad_cal_d0": [0.10], "roas_ad_cal_d3": [0.15], "roas_ad_cal_d7": [adj_roas_d7],
         "roas_ad_cal_d14": [0.25], "roas_ad_cal_d28": [0.30],
         "ad_revenue_total_cal_d0": [100.0], "ad_revenue_total_cal_d3": [150.0],
@@ -51,6 +53,25 @@ def _make_pair(mb_roas_d7=0.20, adj_roas_d7=0.21, cohort_date="2026-08-01",
         "ad_revenue_total_cal_d28": [300.0],
     })
     return df_mb, df_adjust
+
+
+# Metric map cố định dùng riêng cho test (scope "ad_only") — KHÔNG lấy từ
+# config.get_metric_map() để test không bị ảnh hưởng khi ai đó đổi revenue_scope
+# mặc định trong config.py sau này.
+_TEST_METRIC_MAP = {
+    "ROAS_D0": ("ROAS D0", "roas_ad_cal_d0"),
+    "ROAS_D3": ("ROAS D3", "roas_ad_cal_d3"),
+    "ROAS_D7": ("ROAS D7", "roas_ad_cal_d7"),
+    "ROAS_D14": ("ROAS D14", "roas_ad_cal_d14"),
+    "ROAS_D28": ("ROAS D28", "roas_ad_cal_d28"),
+    "COST": ("Cost", "network_cost"),
+    "INSTALLS": ("Adjust Installs", "installs"),
+    "REVENUE_D0": ("Revenue D0", "ad_revenue_total_cal_d0"),
+    "REVENUE_D3": ("Revenue D3", "ad_revenue_total_cal_d3"),
+    "REVENUE_D7": ("Revenue D7", "ad_revenue_total_cal_d7"),
+    "REVENUE_D14": ("Revenue D14", "ad_revenue_total_cal_d14"),
+    "REVENUE_D28": ("Revenue D28", "ad_revenue_total_cal_d28"),
+}
 
 
 def test_merge_and_flag_end_to_end():
@@ -65,7 +86,7 @@ def test_merge_and_flag_end_to_end():
     # Vô hiệu hoá maturity check để test thuần logic ratio (cohort giả không có
     # ý nghĩa "tuổi" thật, tránh N/A do chưa mature làm nhiễu test)
     config.EXCLUDE_IMMATURE_COHORTS = False
-    detail = build_detail(merged)
+    detail = build_detail(merged, _TEST_METRIC_MAP)
 
     # ratio = 0.20 / 0.21 -> rel_diff_pct ~ -4.76%, dưới ngưỡng 5% -> OK
     row = detail[(detail["metric"] == "ROAS_D7")].iloc[0]
@@ -82,7 +103,7 @@ def test_ratio_based_flag_discrepancy_when_over_threshold():
     merged = merge_sources(mb_norm, adj_norm)
 
     config.EXCLUDE_IMMATURE_COHORTS = False
-    detail = build_detail(merged)
+    detail = build_detail(merged, _TEST_METRIC_MAP)
     row = detail[(detail["metric"] == "ROAS_D7")].iloc[0]
 
     assert row["flag"] == "Discrepancy"
@@ -116,7 +137,7 @@ def test_summarize_reads_from_flag_column_not_recomputed():
     merged = merge_sources(mb_norm, adj_norm)
 
     config.EXCLUDE_IMMATURE_COHORTS = False
-    detail = build_detail(merged)
+    detail = build_detail(merged, _TEST_METRIC_MAP)
     result = summarize(detail, verbose=False)
     config.EXCLUDE_IMMATURE_COHORTS = True
 

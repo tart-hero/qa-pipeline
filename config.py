@@ -34,19 +34,15 @@ ADJUST_API_TOKEN = _require_env("ADJUST_API_TOKEN")
 
 ROAS_DAYS = ["d0", "d3", "d7", "d14", "d28"]
 
-# Đã xác nhận qua đối chiếu Revenue thô: Metabase mart tính Ad-only revenue (IAA),
-# nên dùng "roas_ad_cal"/"ad_revenue_total_cal" (KHÔNG dùng "roas_cal"/"all_revenue_total_cal"
-# — 2 biến thể đó là Total = IAA+IAP, sai phạm vi so sánh). Giống nhau cho mọi game.
-ROAS_METRIC_PREFIX = "roas_ad_cal"
-REVENUE_METRIC_PREFIX = "ad_revenue_total_cal"
-
-# Danh sách metric cần fetch từ Adjust — đủ cho cả ROAS, Revenue, Cost, Installs.
-# Giống nhau cho mọi game (chỉ app_token và extra_params khác nhau theo game).
-ADJUST_METRICS = (
-    ["installs", "network_cost"]
-    + [f"{ROAS_METRIC_PREFIX}_{d}" for d in ROAS_DAYS]
-    + [f"{REVENUE_METRIC_PREFIX}_{d}" for d in ROAS_DAYS]
-)
+# [CẬP NHẬT] Metabase mart giờ đã gồm cả IAP (không còn chỉ Ad-only/IAA), nên
+# phạm vi Revenue/ROAS cần so là "total" (IAA+IAP) bên Adjust, KHÔNG phải
+# "ad_only" (chỉ IAA) như quyết định ban đầu (xem lịch sử trong docs/reconciliation.md).
+# 2 bộ prefix tương ứng 2 phạm vi — chọn qua "revenue_scope" trong GAMES[...] bên dưới,
+# để game nào có mart CHƯA gồm IAP vẫn dùng lại "ad_only" mà không cần sửa code ở đây.
+_REVENUE_SCOPE_PREFIXES = {
+    "ad_only": {"roas": "roas_ad_cal", "revenue": "ad_revenue_total_cal"},
+    "total": {"roas": "roas_cal", "revenue": "all_revenue_total_cal"},
+}
 
 # Param filter Adjust mặc định — áp dụng cho mọi game trừ khi override riêng
 # trong GAMES[...]["adjust_extra_params"] bên dưới. Xem docs/reconciliation.md
@@ -75,6 +71,8 @@ GAMES = {
         "metabase_card_id": 81,
         "metabase_game": ["Game A"],
         "metabase_platform": ["ANDROID"],
+        # [CẬP NHẬT] Mart đã gồm IAP -> so Total (roas_cal/all_revenue_total_cal).
+        "revenue_scope": "ad_only",
         "adjust_extra_params": {
             **_ADJUST_EXTRA_PARAMS_DEFAULT,
             "network__in": "ALV",
@@ -90,6 +88,8 @@ GAMES = {
         "metabase_card_id": 81,
         "metabase_game": ["Game B"],
         "metabase_platform": ["IOS"],
+        # TODO: xác nhận lại "total" có đúng cho Game B không — tạm theo Game A.
+        "revenue_scope": "ad_only",
         # TODO: xác nhận lại network__in/ad_revenue_sources cho Game B — tạm copy
         # theo Game A, CHƯA được verify qua đối chiếu thực tế như Game A.
         "adjust_extra_params": {
@@ -106,6 +106,8 @@ GAMES = {
         "metabase_card_id": 81,
         "metabase_game": ["Game C"],
         "metabase_platform": ["ANDROID"],
+        # TODO: xác nhận lại "total" có đúng cho Game C không.
+        "revenue_scope": "ad_only",
         "adjust_extra_params": {
             **_ADJUST_EXTRA_PARAMS_DEFAULT,
             "network__in": "ALV",
@@ -118,6 +120,8 @@ GAMES = {
         "metabase_card_id": 81,  # TODO: xác nhận lại, xem ghi chú ở game_c_android
         "metabase_game": ["Game C"],
         "metabase_platform": ["IOS"],
+        # TODO: xác nhận lại "total" có đúng cho Game C không.
+        "revenue_scope": "ad_only",
         "adjust_extra_params": {
             **_ADJUST_EXTRA_PARAMS_DEFAULT,
             "network__in": "ALV",
@@ -144,24 +148,36 @@ def get_adjust_app_token(game_key: str) -> str:
 # Ngưỡng theo lưu ý trong tài liệu dự án gốc (~5% tương đối).
 THRESHOLD_PCT = 5.0
 
-# metric_name -> (tên cột bên Metabase, tên cột/metric bên Adjust)
+# metric_name -> (tên cột bên Metabase, tên cột/metric bên Adjust) — PHỤ THUỘC
+# revenue_scope của từng game, nên chuyển thành hàm thay vì hằng số cố định.
 # Các cột Metabase lấy nguyên từ output của card_id=81 (đã là số, KHÔNG cần
 # clean_money/clean_pct như khi đọc CSV — đây là điểm khác biệt so với notebook
 # tham khảo QA_GameA_Android_ALV.ipynb vốn đọc từ file CSV export thủ công).
-METRIC_MAP = {
-    "ROAS_D0":  ("ROAS D0",  f"{ROAS_METRIC_PREFIX}_d0"),
-    "ROAS_D3":  ("ROAS D3",  f"{ROAS_METRIC_PREFIX}_d3"),
-    "ROAS_D7":  ("ROAS D7",  f"{ROAS_METRIC_PREFIX}_d7"),
-    "ROAS_D14": ("ROAS D14", f"{ROAS_METRIC_PREFIX}_d14"),
-    "ROAS_D28": ("ROAS D28", f"{ROAS_METRIC_PREFIX}_d28"),
-    "COST":     ("Cost", "network_cost"),
-    "INSTALLS": ("Adjust Installs", "installs"),
-    "REVENUE_D0":  ("Revenue D0",  f"{REVENUE_METRIC_PREFIX}_d0"),
-    "REVENUE_D3":  ("Revenue D3",  f"{REVENUE_METRIC_PREFIX}_d3"),
-    "REVENUE_D7":  ("Revenue D7",  f"{REVENUE_METRIC_PREFIX}_d7"),
-    "REVENUE_D14": ("Revenue D14", f"{REVENUE_METRIC_PREFIX}_d14"),
-    "REVENUE_D28": ("Revenue D28", f"{REVENUE_METRIC_PREFIX}_d28"),
-}
+def get_metric_map(game_key: str) -> dict:
+    scope = GAMES[game_key].get("revenue_scope", "total")
+    prefixes = _REVENUE_SCOPE_PREFIXES[scope]
+    roas_prefix, revenue_prefix = prefixes["roas"], prefixes["revenue"]
+
+    metric_map = {
+        f"ROAS_D{d[1:]}": (f"ROAS D{d[1:]}", f"{roas_prefix}_{d}") for d in ROAS_DAYS
+    }
+    metric_map["COST"] = ("Cost", "network_cost")
+    metric_map["INSTALLS"] = ("Adjust Installs", "installs")
+    for d in ROAS_DAYS:
+        metric_map[f"REVENUE_D{d[1:]}"] = (f"Revenue D{d[1:]}", f"{revenue_prefix}_{d}")
+    return metric_map
+
+
+def get_adjust_metrics(game_key: str) -> list[str]:
+    """Danh sách metric cần fetch từ Adjust — đúng theo revenue_scope của game đó."""
+    scope = GAMES[game_key].get("revenue_scope", "total")
+    prefixes = _REVENUE_SCOPE_PREFIXES[scope]
+    return (
+        ["installs", "network_cost"]
+        + [f"{prefixes['roas']}_{d}" for d in ROAS_DAYS]
+        + [f"{prefixes['revenue']}_{d}" for d in ROAS_DAYS]
+    )
+
 
 METRIC_ORDER = [
     "ROAS_D0", "ROAS_D3", "ROAS_D7", "ROAS_D14", "ROAS_D28",
@@ -170,6 +186,8 @@ METRIC_ORDER = [
 ]
 
 # Chỉ ROAS_DX và REVENUE_DX có khái niệm "maturity" (COST/INSTALLS thì không).
+# KHÔNG phụ thuộc revenue_scope — số ngày yêu cầu cho từng mốc DX là cố định,
+# chỉ nguồn cột Adjust đổi theo scope, không phải yêu cầu về "tuổi" cohort.
 ROAS_DAY_MAP = {f"ROAS_D{d[1:]}": int(d[1:]) for d in ROAS_DAYS}
 REVENUE_DAY_MAP = {f"REVENUE_D{d[1:]}": int(d[1:]) for d in ROAS_DAYS}
 MATURITY_DAY_MAP = {**ROAS_DAY_MAP, **REVENUE_DAY_MAP}

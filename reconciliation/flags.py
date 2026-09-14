@@ -27,13 +27,17 @@ def _resolve_as_of_date() -> _date:
     return _date.today()
 
 
-def build_detail(merged: pd.DataFrame) -> pd.DataFrame:
+def build_detail(merged: pd.DataFrame, metric_map: dict) -> pd.DataFrame:
     """
-    Input: DataFrame đã merge (outer join) từ reconciliation.merge.merge_sources().
-    Dùng nguyên `merged` (bao gồm cả các dòng only_mb/only_adj), KHÔNG lọc
-    trước "_merge == both" — các dòng lệch join sẽ tự động ra flag
-    "N/A (thiếu dữ liệu)" vì 1 trong 2 giá trị mb_val/adj_val là NaN, giữ được
-    đầy đủ thông tin để debug thay vì âm thầm loại bỏ.
+    Input:
+      merged: DataFrame đã merge (outer join) từ reconciliation.merge.merge_sources().
+        Dùng nguyên `merged` (bao gồm cả các dòng only_mb/only_adj), KHÔNG lọc
+        trước "_merge == both" — các dòng lệch join sẽ tự động ra flag
+        "N/A (thiếu dữ liệu)" vì 1 trong 2 giá trị mb_val/adj_val là NaN, giữ được
+        đầy đủ thông tin để debug thay vì âm thầm loại bỏ.
+      metric_map: dict metric_name -> (cột Metabase, cột Adjust), lấy từ
+        config.get_metric_map(game_key) — PHỤ THUỘC game vì mỗi game có thể có
+        revenue_scope khác nhau (Ad-only vs Total, xem config.py).
 
     Output: DataFrame long-format với các cột:
     cohort_date, network, campaign, metric, cohort_age_days, is_immature,
@@ -56,7 +60,7 @@ def build_detail(merged: pd.DataFrame) -> pd.DataFrame:
 
         cohort_age_days = (as_of_date - cohort_date).days if pd.notna(cohort_date) else np.nan
 
-        for metric, (mb_col, adj_col) in config.METRIC_MAP.items():
+        for metric, (mb_col, adj_col) in metric_map.items():
             mb_val = r.get(mb_col, np.nan)
             adj_val = r.get(adj_col, np.nan)
 
@@ -100,6 +104,6 @@ def build_detail(merged: pd.DataFrame) -> pd.DataFrame:
             })
 
     detail = pd.DataFrame(rows).sort_values(["cohort_date", "metric"]).reset_index(drop=True)
-    print(f"\nBảng detail: {detail.shape[0]} dòng (= {merged.shape[0]} cohort x {len(config.METRIC_MAP)} chỉ số)")
+    print(f"\nBảng detail: {detail.shape[0]} dòng (= {merged.shape[0]} cohort x {len(metric_map)} chỉ số)")
     print(f"Số dòng bị loại vì cohort chưa đủ maturity: {n_immature_excluded}")
     return detail
