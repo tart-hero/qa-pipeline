@@ -16,7 +16,6 @@ __pycache__/
 # Data exports (thường nặng, không nên push)
 *.csv
 data/
-outputs/
 
 # OS files
 .DS_Store

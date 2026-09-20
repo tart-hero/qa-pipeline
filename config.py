@@ -34,16 +34,6 @@ ADJUST_API_TOKEN = _require_env("ADJUST_API_TOKEN")
 
 ROAS_DAYS = ["d0", "d3", "d7", "d14", "d28"]
 
-# [CẬP NHẬT] Metabase mart giờ đã gồm cả IAP (không còn chỉ Ad-only/IAA), nên
-# phạm vi Revenue/ROAS cần so là "total" (IAA+IAP) bên Adjust, KHÔNG phải
-# "ad_only" (chỉ IAA) như quyết định ban đầu (xem lịch sử trong docs/reconciliation.md).
-# 2 bộ prefix tương ứng 2 phạm vi — chọn qua "revenue_scope" trong GAMES[...] bên dưới,
-# để game nào có mart CHƯA gồm IAP vẫn dùng lại "ad_only" mà không cần sửa code ở đây.
-_REVENUE_SCOPE_PREFIXES = {
-    "ad_only": {"roas": "roas_ad_cal", "revenue": "ad_revenue_total_cal"},
-    "total": {"roas": "roas_cal", "revenue": "all_revenue_total_cal"},
-}
-
 # Param filter Adjust mặc định — áp dụng cho mọi game trừ khi override riêng
 # trong GAMES[...]["adjust_extra_params"] bên dưới. Xem docs/reconciliation.md
 # để biết lý do chọn từng param (đã xác nhận qua debug thực tế với Game A):
@@ -59,74 +49,50 @@ _ADJUST_EXTRA_PARAMS_DEFAULT = {
 }
 
 # ---------------------------------------------------------------------------
-# Registry 4 game — THÊM/SỬA game ở đây khi cần, KHÔNG sửa ở notebook.
-# Chọn game nào chạy cho lần này -> sửa trong run_config.py (không sửa file này).
+# [CẬP NHẬT v4 — SQL card_id=81 đổi từ Field Filter sang Plain Variable]
+# game/platform giờ là SCALAR STRING (không phải list) vì SQL dùng so sánh
+# `full_name = {{game}}` (plain variable, single-value) thay vì Field Filter
+# đa chọn như trước. "network__in" KHÔNG còn cố định trong từng game nữa — xem
+# NETWORK_OPTIONS + get_adjust_extra_params() bên dưới: network giờ là lựa chọn
+# CHUNG cho lần chạy (qua run_config.NETWORK_KEY), áp dụng cho CẢ Metabase lẫn
+# Adjust cùng lúc, vì 2 phía phải lọc cùng 1 network mới join được.
+# "revenue_scope" không còn cần thiết — SQL giờ LUÔN tính ROAS = ad + IAP.
 # ---------------------------------------------------------------------------
 GAMES = {
     "game_a_android": {
         "label": "Game A (CDS) — Android",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_CDS_ANDROID",
-        # card_id của Question "Cohort ROAS + Revenue by Campain" — Native SQL
-        # Question độc lập (không nằm trong Dashboard), đã xác nhận qua qa_explore.ipynb.
         "metabase_card_id": 81,
-        "metabase_game": ["Game A"],
-        "metabase_platform": ["ANDROID"],
-        # [CẬP NHẬT] Mart đã gồm IAP -> so Total (roas_cal/all_revenue_total_cal).
-        "revenue_scope": "ad_only",
-        "adjust_extra_params": {
-            **_ADJUST_EXTRA_PARAMS_DEFAULT,
-            "network__in": "ALV",
-            "ad_revenue_sources": "AppLovin Max",
-        },
+        "metabase_game": "Game A",
+        "metabase_platform": "ANDROID",
+        "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
     "game_b_ios": {
         "label": "Game B (CDS) — iOS",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_CDS_IOS",
-        # TODO: xác nhận lại card_id đúng cho Game B iOS — tạm dùng chung Question
-        # 81 nếu mart/Question phục vụ chung nhiều game qua filter {{game}}/{{platform}}.
-        # Nếu Game B có Question riêng, đổi số này.
+        # TODO: xác nhận lại card_id đúng cho Game B iOS nếu có Question riêng.
         "metabase_card_id": 81,
-        "metabase_game": ["Game B"],
-        "metabase_platform": ["IOS"],
-        # TODO: xác nhận lại "total" có đúng cho Game B không — tạm theo Game A.
-        "revenue_scope": "ad_only",
-        # TODO: xác nhận lại network__in/ad_revenue_sources cho Game B — tạm copy
-        # theo Game A, CHƯA được verify qua đối chiếu thực tế như Game A.
-        "adjust_extra_params": {
-            **_ADJUST_EXTRA_PARAMS_DEFAULT,
-            "network__in": "ALV",
-            "ad_revenue_sources": "AppLovin Max",
-        },
+        "metabase_game": "Game B",
+        "metabase_platform": "IOS",
+        # TODO: xác nhận lại ad_revenue_sources cho Game B — tạm copy theo Game A.
+        "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
     "game_c_android": {
         "label": "Game C (BCE) — Android",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_BCE_ANDROID",
-        # TODO: xác nhận card_id đúng cho Game C — Game C có thể không dùng chung
-        # mart/Question với Game A/B (tên game khác "CDS"), CẦN kiểm tra lại.
+        # TODO: xác nhận card_id đúng cho Game C — có thể không dùng chung mart/Question.
         "metabase_card_id": 81,
-        "metabase_game": ["Game C"],
-        "metabase_platform": ["ANDROID"],
-        # TODO: xác nhận lại "total" có đúng cho Game C không.
-        "revenue_scope": "ad_only",
-        "adjust_extra_params": {
-            **_ADJUST_EXTRA_PARAMS_DEFAULT,
-            "network__in": "ALV",
-            "ad_revenue_sources": "AppLovin Max",
-        },
+        "metabase_game": "Game C",
+        "metabase_platform": "ANDROID",
+        "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
     "game_c_ios": {
         "label": "Game C (BCE) — iOS",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_BCE_IOS",
         "metabase_card_id": 81,  # TODO: xác nhận lại, xem ghi chú ở game_c_android
-        "metabase_game": ["Game C"],
-        "metabase_platform": ["IOS"],
-        # TODO: xác nhận lại "total" có đúng cho Game C không.
-        "revenue_scope": "ad_only",
-        "adjust_extra_params": {
-            **_ADJUST_EXTRA_PARAMS_DEFAULT,
-            "network__in": "ALV",
-            "ad_revenue_sources": "AppLovin Max",
-        },
+        "metabase_game": "Game C",
+        "metabase_platform": "IOS",
+        "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
 }
 
@@ -140,6 +106,70 @@ def get_adjust_app_token(game_key: str) -> str:
     env_key = GAMES[game_key]["adjust_app_token_env"]
     return _require_env(env_key)
 
+
+# ---------------------------------------------------------------------------
+# [MỚI] Lựa chọn Network — dùng CHUNG cho cả Metabase lẫn Adjust trong 1 lần
+# chạy (chọn qua run_config.NETWORK_KEY). SQL card_id=81 giờ hardcode
+# `WHERE network IN ('APPLOVIN', 'UNITY')` nên đây là 2 lựa chọn hợp lệ duy nhất.
+# 2 hệ đặt tên khác nhau: Metabase dùng tên đầy đủ viết hoa (khớp literal trong
+# SQL), Adjust dùng viết tắt — ĐÃ xác nhận qua response thật trước đó
+# (network="ALV" cho AppLovin, network="Unity" cho Unity — chú ý "Unity" viết
+# hoa chữ đầu bên Adjust, KHÁC "UNITY" toàn hoa bên Metabase).
+# ---------------------------------------------------------------------------
+NETWORK_OPTIONS = {
+    "applovin": {"metabase": "APPLOVIN", "adjust": "ALV"},
+    "unity": {"metabase": "UNITY", "adjust": "Unity"},
+}
+
+
+def get_metabase_network_value(network_key):
+    """network_key: 1 key (str) -> lọc đúng network đó ("network" là Plain
+    Variable trong SQL card_id=81, chỉ nhận 1 giá trị scalar).
+    List ĐỦ CẢ NETWORK_OPTIONS (vd ["applovin", "unity"]) -> trả về None
+    (không truyền filter "network" cho Metabase) -- SQL đã hardcode
+    `WHERE network IN ('APPLOVIN', 'UNITY')` nên bỏ trống filter "network"
+    (clause `[[AND network = {{network}}]]` bị skip) tự động trả về CẢ 2
+    network trong 1 query/1 DataFrame — xem comment trong SQL gốc.
+    List 1 phần tử -> coi như str (lọc riêng đúng network đó)."""
+    if isinstance(network_key, (list, tuple)):
+        if set(network_key) >= set(NETWORK_OPTIONS.keys()):
+            return None
+        if len(network_key) == 1:
+            network_key = network_key[0]
+        else:
+            raise ValueError(
+                "Metabase 'network' là Plain Variable, chỉ lọc được 1 giá trị hoặc "
+                "bỏ trống (không lọc) — không hỗ trợ lọc 1 tập con nhiều network. "
+                f"Truyền list ĐẦY ĐỦ {list(NETWORK_OPTIONS)} để lấy cả 2 network, "
+                "hoặc 1 network_key (str) để lọc riêng 1 network."
+            )
+    if network_key not in NETWORK_OPTIONS:
+        raise KeyError(f"network_key '{network_key}' không hợp lệ. Chọn 1 trong: {list(NETWORK_OPTIONS)}")
+    return NETWORK_OPTIONS[network_key]["metabase"]
+
+
+def get_adjust_extra_params(game_key: str, network_key) -> dict:
+    """Merge adjust_extra_params cố định của game với network__in được CHỌN TẠI
+    RUNTIME (qua run_config.NETWORK_KEY) — bắt buộc để Metabase và Adjust luôn
+    lọc cùng 1 tập network, nếu không sẽ ra 100% only_mb/only_adj khi merge
+    (không join được dòng nào).
+
+    network_key: 1 key (str) -> network__in = 1 giá trị Adjust tương ứng.
+    list nhiều key (vd ["applovin", "unity"]) -> network__in = list nối bằng
+    dấu phẩy (Adjust hỗ trợ multi-value cho *__in), khớp với Metabase khi bỏ
+    trống filter "network" (xem get_metabase_network_value)."""
+    if game_key not in GAMES:
+        raise KeyError(f"game_key '{game_key}' không tồn tại trong config.GAMES.")
+    params = dict(GAMES[game_key]["adjust_extra_params"])  # copy, không sửa bản gốc trong GAMES
+    if isinstance(network_key, (list, tuple)):
+        params["network__in"] = get_adjust_network_filter(list(network_key))
+    else:
+        if network_key not in NETWORK_OPTIONS:
+            raise KeyError(f"network_key '{network_key}' không hợp lệ. Chọn 1 trong: {list(NETWORK_OPTIONS)}")
+        params["network__in"] = NETWORK_OPTIONS[network_key]["adjust"]
+    return params
+
+
 # ---------------------------------------------------------------------------
 # Reconciliation / flagging
 # ---------------------------------------------------------------------------
@@ -148,49 +178,58 @@ def get_adjust_app_token(game_key: str) -> str:
 # Ngưỡng theo lưu ý trong tài liệu dự án gốc (~5% tương đối).
 THRESHOLD_PCT = 5.0
 
-# metric_name -> (tên cột bên Metabase, tên cột/metric bên Adjust) — PHỤ THUỘC
-# revenue_scope của từng game, nên chuyển thành hàm thay vì hằng số cố định.
-# Các cột Metabase lấy nguyên từ output của card_id=81 (đã là số, KHÔNG cần
-# clean_money/clean_pct như khi đọc CSV — đây là điểm khác biệt so với notebook
-# tham khảo QA_GameA_Android_ALV.ipynb vốn đọc từ file CSV export thủ công).
+# [CẬP NHẬT v4] SQL card_id=81 giờ LUÔN tính ROAS = ad revenue + IAP (không còn
+# nhánh Ad-only) — "revenue_scope" không còn ý nghĩa, bỏ khỏi hàm này. Đồng thời
+# Metabase giờ xuất 2 cột Revenue TÁCH RIÊNG (không còn 1 cột "Revenue DX" gộp):
+#   - ad_revenue_total_cal_dX  (chỉ Ad revenue — IAA)
+#   - revenue_total_cal_dX     (chỉ IAP)
+# Metabase đặt tên cột TRÙNG THẲNG với tên metric Adjust tương ứng (theo comment
+# trong SQL), nên metric_map dưới đây dùng chung 1 tên cho cả 2 vế.
+# ⚠️ "revenue_total_cal_dX" là tên metric CHƯA được xác minh chính thức trong
+# tài liệu công khai Adjust — kiểm tra trực tiếp bằng 1 request thử trước khi
+# tin tưởng hoàn toàn (xem hướng dẫn kèm theo).
 def get_metric_map(game_key: str) -> dict:
-    scope = GAMES[game_key].get("revenue_scope", "total")
-    prefixes = _REVENUE_SCOPE_PREFIXES[scope]
-    roas_prefix, revenue_prefix = prefixes["roas"], prefixes["revenue"]
-
     metric_map = {
-        f"ROAS_D{d[1:]}": (f"ROAS D{d[1:]}", f"{roas_prefix}_{d}") for d in ROAS_DAYS
+        f"ROAS_D{d[1:]}": (f"ROAS D{d[1:]}", f"roas_cal_{d}") for d in ROAS_DAYS
     }
     metric_map["COST"] = ("Cost", "network_cost")
     metric_map["INSTALLS"] = ("Adjust Installs", "installs")
+    # [FIX] Metabase đặt tên cột TRÙNG với tên metric Adjust (theo thiết kế — xem
+    # comment trong SQL card_id=81: "named exactly as the Adjust Report Service
+    # API metrics they correspond to"). Sau merge_sources() (suffixes=("_mb","_adj")),
+    # pandas TỰ ĐỘNG đổi tên các cột trùng này thành "..._mb"/"..._adj" — phải
+    # tham chiếu đúng tên đã đổi, KHÔNG dùng tên gốc (tên gốc không còn tồn tại
+    # trong `merged`, khiến build_detail() luôn ra NaN cho cả 2 vế -> 100% N/A,
+    # dù cả 2 nguồn thực ra đều có dữ liệu).
     for d in ROAS_DAYS:
-        metric_map[f"REVENUE_D{d[1:]}"] = (f"Revenue D{d[1:]}", f"{revenue_prefix}_{d}")
+        metric_map[f"AD_REVENUE_D{d[1:]}"] = (f"ad_revenue_total_cal_{d}_mb", f"ad_revenue_total_cal_{d}_adj")
+        metric_map[f"IAP_REVENUE_D{d[1:]}"] = (f"revenue_total_cal_{d}_mb", f"revenue_total_cal_{d}_adj")
     return metric_map
 
 
 def get_adjust_metrics(game_key: str) -> list[str]:
-    """Danh sách metric cần fetch từ Adjust — đúng theo revenue_scope của game đó."""
-    scope = GAMES[game_key].get("revenue_scope", "total")
-    prefixes = _REVENUE_SCOPE_PREFIXES[scope]
+    """Danh sách metric cần fetch từ Adjust — cố định cho mọi game (SQL giờ
+    luôn dùng scope Total, không còn tuỳ biến theo game như trước)."""
     return (
         ["installs", "network_cost"]
-        + [f"{prefixes['roas']}_{d}" for d in ROAS_DAYS]
-        + [f"{prefixes['revenue']}_{d}" for d in ROAS_DAYS]
+        + [f"roas_cal_{d}" for d in ROAS_DAYS]
+        + [f"ad_revenue_total_cal_{d}" for d in ROAS_DAYS]
+        + [f"revenue_total_cal_{d}" for d in ROAS_DAYS]
     )
 
 
 METRIC_ORDER = [
     "ROAS_D0", "ROAS_D3", "ROAS_D7", "ROAS_D14", "ROAS_D28",
-    "REVENUE_D0", "REVENUE_D3", "REVENUE_D7", "REVENUE_D14", "REVENUE_D28",
+    "AD_REVENUE_D0", "AD_REVENUE_D3", "AD_REVENUE_D7", "AD_REVENUE_D14", "AD_REVENUE_D28",
+    "IAP_REVENUE_D0", "IAP_REVENUE_D3", "IAP_REVENUE_D7", "IAP_REVENUE_D14", "IAP_REVENUE_D28",
     "COST", "INSTALLS",
 ]
 
-# Chỉ ROAS_DX và REVENUE_DX có khái niệm "maturity" (COST/INSTALLS thì không).
-# KHÔNG phụ thuộc revenue_scope — số ngày yêu cầu cho từng mốc DX là cố định,
-# chỉ nguồn cột Adjust đổi theo scope, không phải yêu cầu về "tuổi" cohort.
+# Chỉ ROAS_DX/AD_REVENUE_DX/IAP_REVENUE_DX có khái niệm "maturity" (COST/INSTALLS thì không).
 ROAS_DAY_MAP = {f"ROAS_D{d[1:]}": int(d[1:]) for d in ROAS_DAYS}
-REVENUE_DAY_MAP = {f"REVENUE_D{d[1:]}": int(d[1:]) for d in ROAS_DAYS}
-MATURITY_DAY_MAP = {**ROAS_DAY_MAP, **REVENUE_DAY_MAP}
+AD_REVENUE_DAY_MAP = {f"AD_REVENUE_D{d[1:]}": int(d[1:]) for d in ROAS_DAYS}
+IAP_REVENUE_DAY_MAP = {f"IAP_REVENUE_D{d[1:]}": int(d[1:]) for d in ROAS_DAYS}
+MATURITY_DAY_MAP = {**ROAS_DAY_MAP, **AD_REVENUE_DAY_MAP, **IAP_REVENUE_DAY_MAP}
 
 # Mốc "hôm nay" dùng để tính Cohort Age = DATA_ASOF_DATE - Cohort Date.
 # Để None -> tự lấy ngày hệ thống hiện tại. Đặt tường minh khi bạn muốn tái
@@ -220,3 +259,23 @@ NETWORK_NAME_MAPPING = {
     "GGA": "GOOGLE ADS",
     "GOOGLE ADS": "GOOGLE ADS",
 }
+
+def get_metabase_network_values(network_keys: list[str]) -> list[str]:
+    """Convert list network_key → list metabase network values.
+    
+    VD: ['applovin', 'unity'] → ['APPLOVIN', 'UNITY']
+    """
+    if not network_keys:
+        raise ValueError("network_keys không thể rỗng")
+    return [NETWORK_OPTIONS[key]["metabase"] for key in network_keys]
+
+
+def get_adjust_network_filter(network_keys: list[str]) -> str:
+    """Convert list network_key → chuỗi filter cho Adjust network__in.
+    
+    VD: ['applovin', 'unity'] → 'ALV,Unity'
+    (Adjust dùng dấu phẩy để ngăn cách trong query string)
+    """
+    if not network_keys:
+        raise ValueError("network_keys không thể rỗng")
+    return ",".join([NETWORK_OPTIONS[key]["adjust"] for key in network_keys])

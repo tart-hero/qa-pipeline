@@ -73,3 +73,18 @@ def top_discrepancy(detail: pd.DataFrame, top_n: int = 20, per_campaign: int | N
         )
 
     return result
+
+def iap_mismatches(detail: pd.DataFrame, epsilon: float = 0.01) -> pd.DataFrame:
+    """Danh sách cohort (Ngày x Campaign) có IAP Metabase KHÁC Adjust — so khác
+    biệt TUYỆT ĐỐI (không so với ngưỡng THRESHOLD_PCT), nên bắt cả những lệch
+    nhỏ dưới 5%. Bao gồm cả các dòng IAP Metabase = 0 trong khi Adjust có giá
+    trị (Adjust "giữ" cohort IAP 3-4 ngày trước khi release, Metabase tạm để 0
+    trong lúc chờ) — không lọc riêng case này.
+    """
+    iap_metrics = [f"IAP_REVENUE_D{d[1:]}" for d in config.ROAS_DAYS]
+    sub = detail[detail["metric"].isin(iap_metrics)].copy()
+    sub = sub[sub["flag"].isin(["OK", "Discrepancy"])]  # loại N/A (thiếu dữ liệu/chưa mature)
+    sub = sub[sub["abs_diff"].abs() > epsilon]
+
+    cols = ["cohort_date", "network", "campaign", "metric", "mb_value", "adjust_value", "abs_diff", "rel_diff_pct", "flag"]
+    return sub[cols].sort_values(["cohort_date", "campaign", "metric"]).reset_index(drop=True)

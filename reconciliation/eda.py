@@ -14,8 +14,15 @@ import config
 
 # Metric có thể CỘNG DỒN có ý nghĩa (Cost, Installs, Revenue) — dùng cho so sánh
 # tổng. KHÔNG gồm ROAS_* vì ROAS là tỷ lệ, cộng dồn không có ý nghĩa thống kê.
-SUMMABLE_METRICS = ["COST", "INSTALLS"] + [f"REVENUE_D{d[1:]}" for d in config.ROAS_DAYS]
-
+# Metric có thể CỘNG DỒN có ý nghĩa (Cost, Installs, Ad Revenue, IAP Revenue) —
+# dùng cho so sánh tổng. KHÔNG gồm ROAS_* vì ROAS là tỷ lệ, cộng dồn không có
+# ý nghĩa thống kê. [CẬP NHẬT config mới] REVENUE_DX đã tách thành AD_REVENUE_DX
+# + IAP_REVENUE_DX riêng biệt, không còn 1 metric REVENUE_DX gộp.
+SUMMABLE_METRICS = (
+    ["COST", "INSTALLS"]
+    + [f"AD_REVENUE_D{d[1:]}" for d in config.ROAS_DAYS]
+    + [f"IAP_REVENUE_D{d[1:]}" for d in config.ROAS_DAYS]
+)
 
 def _valid(detail: pd.DataFrame) -> pd.DataFrame:
     """Chỉ giữ dòng có flag hợp lệ (OK/Discrepancy) — loại các dòng N/A
@@ -121,22 +128,73 @@ def _draw_threshold_lines(ax) -> None:
 # ---------------------------------------------------------------------------
 # 1. So sánh TỔNG — Metabase vs Adjust (mới thêm, notebook tham khảo chưa có)
 # ---------------------------------------------------------------------------
-def compare_totals(detail: pd.DataFrame, metrics: list[str] | None = None) -> pd.DataFrame:
-    """Tổng Installs/Cost/Revenue DX cộng dồn trên toàn bộ khoảng ngày đã chọn,
-    so sánh Metabase vs Adjust. Trả về DataFrame để dùng tiếp (VD ghi báo cáo)."""
+# [MỚI] Cặp (AD_REVENUE_DX, IAP_REVENUE_DX) -> metric tổng hợp TOTAL_REVENUE_DX,
+# so "Metabase (Ad+IAP)" với "Adjust (Ad+IAP)" — đại diện đúng cho tử số của
+# roas_cal_dX (Total ROAS) mà SQL Metabase đã khẳng định 2 cột này cộng lại sẽ
+# khớp `all_revenue_total_cal_dN` bên Adjust. Đây là metric TỔNG HỢP CHỈ DÙNG
+# TRONG EDA (không có trong config.METRIC_MAP/detail gốc — không ảnh hưởng
+# logic flag ở reconciliation/flags.py).
+_REVENUE_COMBO_METRICS = {
+    f"TOTAL_REVENUE_D{d[1:]}": (f"AD_REVENUE_D{d[1:]}", f"IAP_REVENUE_D{d[1:]}")
+    for d in config.ROAS_DAYS
+}
+ 
+ 
+def _combined_revenue_rows(detail: pd.DataFrame) -> pd.DataFrame:
+    """Cộng Ad + IAP THEO TỪNG COHORT (join theo cohort_date/network/campaign)
+    trước khi gộp tổng — nếu chỉ cộng 2 tổng riêng lẻ (sum(Ad) + sum(IAP)) có
+    thể lệch khi 1 bên có cohort N/A (thiếu dữ liệu/chưa mature) mà bên kia
+    không, khiến 2 vế cộng từ 2 tập cohort khác nhau."""
+    valid = _valid(detail)
+    keys = ["cohort_date", "network", "campaign"]
+    rows = []
+    for total_metric, (ad_metric, iap_metric) in _REVENUE_COMBO_METRICS.items():
+        ad = valid.loc[valid["metric"] == ad_metric, keys + ["mb_value", "adjust_value"]]
+        iap = valid.loc[valid["metric"] == iap_metric, keys + ["mb_value", "adjust_value"]]
+        merged = ad.merge(iap, on=keys, suffixes=("_ad", "_iap"))  # inner join: chỉ giữ cohort có đủ CẢ HAI
+        if merged.empty:
+            continue
+        rows.append(pd.DataFrame({
+            "metric": total_metric,
+            "mb_value": merged["mb_value_ad"] + merged["mb_value_iap"],
+            "adjust_value": merged["adjust_value_ad"] + merged["adjust_value_iap"],
+        }))
+    if not rows:
+        return pd.DataFrame(columns=["metric", "mb_value", "adjust_value"])
+    return pd.concat(rows, ignore_index=True)
+ 
+ 
+def compare_totals(
+    detail: pd.DataFrame,
+    metrics: list[str] | None = None,
+    include_total_revenue: bool = True,
+) -> pd.DataFrame:
+    """Tổng Installs/Cost/Ad Revenue/IAP Revenue cộng dồn trên toàn bộ khoảng
+    ngày đã chọn, so sánh Metabase vs Adjust. `include_total_revenue=True`
+    (mặc định) thêm 5 dòng TOTAL_REVENUE_DX = Ad+IAP cộng theo từng cohort —
+    đây là con số nên đối chiếu với `roas_cal_dX` (Total ROAS) đã dùng làm chuẩn
+    trong reconciliation, khác AD/IAP đứng riêng chỉ mang tính chẩn đoán từng phần.
+    Trả về DataFrame để dùng tiếp (VD ghi báo cáo)."""
     metrics = metrics or SUMMABLE_METRICS
     valid = _valid(detail)
-    valid = valid[valid["metric"].isin(metrics)]
-
+    valid = valid[valid["metric"].isin(metrics)][["metric", "mb_value", "adjust_value"]]
+ 
+    parts = [valid]
+    if include_total_revenue:
+        parts.append(_combined_revenue_rows(detail))
+    combined = pd.concat(parts, ignore_index=True)
+ 
     totals = (
-        valid.groupby("metric")
+        combined.groupby("metric")
         .agg(mb_total=("mb_value", "sum"), adjust_total=("adjust_value", "sum"), n=("mb_value", "count"))
         .reset_index()
     )
     totals["rel_diff_pct"] = (totals["mb_total"] / totals["adjust_total"] - 1) * 100
-    totals["metric"] = pd.Categorical(totals["metric"], categories=config.METRIC_ORDER, ordered=True)
+ 
+    order = list(config.METRIC_ORDER) + list(_REVENUE_COMBO_METRICS)
+    totals["metric"] = pd.Categorical(totals["metric"], categories=order, ordered=True)
     totals = totals.sort_values("metric").reset_index(drop=True)
-
+ 
     print("=== So sánh TỔNG (cộng dồn toàn bộ khoảng ngày) ===")
     print(totals.to_string(index=False))
     return totals
@@ -261,7 +319,7 @@ def plot_ratio_trend(detail: pd.DataFrame, metrics: list[str] | None = None) -> 
     """[TOTAL — gộp mọi Campaign] Line chart trung bình ratio (mb/adj) mỗi ngày,
     cho vài metric đại diện, gộp chung tất cả campaign. ratio=1 (đường nét đứt)
     nghĩa là khớp hoàn toàn."""
-    metrics = metrics or ["ROAS_D0", "REVENUE_D0", "INSTALLS"]
+    metrics = metrics or ["ROAS_D0", "AD_REVENUE_D0", "IAP_REVENUE_D0", "INSTALLS"]
     valid = _valid(detail)
     trend = valid.groupby(["cohort_date", "metric"])["ratio"].mean().reset_index()
 
@@ -654,6 +712,38 @@ def plot_rel_diff_histogram_by_campaign(
     fig.suptitle(f"Phân bố sai số tương đối theo Campaign — metric: {metric} (ngưỡng ±{config.THRESHOLD_PCT}%)")
     plt.tight_layout()
     plt.show()
+
+def plot_rel_diff_histogram_for_campaign(
+    detail: pd.DataFrame,
+    campaign: str,
+    metrics: list[str] | None = None,
+    bins: int = 30,
+) -> None:
+    """[1 CAMPAIGN — TẤT CẢ METRIC] Facet grid — 1 ô/metric, cho ĐÚNG 1 campaign
+    (đối xứng với plot_rel_diff_histogram_by_campaign: ở đó cố định 1 metric,
+    facet theo campaign; ở đây cố định 1 campaign, facet theo metric). Đổi
+    `campaign` để xem campaign khác."""
+    valid = _valid(detail)
+    valid = valid[valid["campaign"] == campaign]
+
+    if valid.empty:
+        print(f"⚠️ Không tìm thấy dữ liệu hợp lệ cho campaign '{campaign}'. "
+              f"Kiểm tra lại tên campaign (VD: sorted(detail['campaign'].unique())).")
+        return
+
+    metrics = metrics or config.METRIC_ORDER
+    metrics_present = [m for m in metrics if m in valid["metric"].unique()]
+
+    fig, axes = _facet_grid_axes(len(metrics_present))
+    for i, m in enumerate(metrics_present):
+        sub = valid[valid["metric"] == m]["rel_diff_pct"].dropna()
+        _draw_rel_diff_hist(axes[i], sub, bins, config.THRESHOLD_PCT)
+        axes[i].set_title(f"{m}  (n={len(sub)})", fontsize=10)
+        axes[i].set_xlabel("rel_diff_pct (%)")
+
+    fig.suptitle(f"Phân bố sai số tương đối theo Metric — Campaign: {campaign} (ngưỡng ±{config.THRESHOLD_PCT}%)")
+    plt.tight_layout()
+    plt.show()
  
  
 def plot_rel_diff_ecdf(detail: pd.DataFrame, metrics: list[str] | None = None) -> pd.DataFrame:
@@ -661,7 +751,7 @@ def plot_rel_diff_ecdf(detail: pd.DataFrame, metrics: list[str] | None = None) -
     số <= X%?". Đường đỏ chấm đứng = ngưỡng THRESHOLD_PCT; giao điểm với mỗi
     đường ECDF chính là % đạt ngưỡng của metric đó (cũng in ra dạng bảng số).
     """
-    metrics = metrics or ["ROAS_D0", "ROAS_D7", "ROAS_D28", "REVENUE_D0"]
+    metrics = metrics or ["ROAS_D0", "ROAS_D7", "ROAS_D28", "AD_REVENUE_D0", "IAP_REVENUE_D0"]
     valid = _valid(detail)
  
     fig, ax = plt.subplots(figsize=(9, 5.5))
