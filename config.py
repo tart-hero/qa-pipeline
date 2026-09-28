@@ -109,12 +109,22 @@ def get_adjust_app_token(game_key: str) -> str:
 
 # ---------------------------------------------------------------------------
 # [MỚI] Lựa chọn Network — dùng CHUNG cho cả Metabase lẫn Adjust trong 1 lần
-# chạy (chọn qua run_config.NETWORK_KEY). SQL card_id=81 giờ hardcode
-# `WHERE network IN ('APPLOVIN', 'UNITY')` nên đây là 2 lựa chọn hợp lệ duy nhất.
+# chạy (chọn qua run_config.NETWORK_KEY).
 # 2 hệ đặt tên khác nhau: Metabase dùng tên đầy đủ viết hoa (khớp literal trong
 # SQL), Adjust dùng viết tắt — ĐÃ xác nhận qua response thật trước đó
 # (network="ALV" cho AppLovin, network="Unity" cho Unity — chú ý "Unity" viết
 # hoa chữ đầu bên Adjust, KHÁC "UNITY" toàn hoa bên Metabase).
+#
+# [CẬP NHẬT 2026-09-26] Card Metabase id=81 đã được sửa lại phía owner
+# (2026-09-24): "network" giờ là Field Filter multi-select THẬT (target
+# ["dimension", ["template-tag", "network"]], isMultiSelect=true) — không còn
+# là Plain Variable scalar như bản cũ, và view nguồn (`v_dashboard_cohort_roas`)
+# giờ có CẢ network 'ORGANIC' (trước đây SQL hardcode WHERE network IN
+# ('APPLOVIN','UNITY') nên không cần lo Organic lọt vào). Vì vậy PHẢI luôn
+# truyền filter "network" tường minh (dạng list) cho Metabase — bỏ trống sẽ
+# lấy CẢ Organic, sai lệch với Adjust. Đã xác nhận qua request thật: value
+# phải là list dù chỉ chọn 1 network (VD ["APPLOVIN"]), và có thể chọn bất kỳ
+# tập con nào (không còn giới hạn "chỉ 1 hoặc đủ cả 2" như bản Plain Variable).
 # ---------------------------------------------------------------------------
 NETWORK_OPTIONS = {
     "applovin": {"metabase": "APPLOVIN", "adjust": "ALV"},
@@ -122,30 +132,16 @@ NETWORK_OPTIONS = {
 }
 
 
-def get_metabase_network_value(network_key):
-    """network_key: 1 key (str) -> lọc đúng network đó ("network" là Plain
-    Variable trong SQL card_id=81, chỉ nhận 1 giá trị scalar).
-    List ĐỦ CẢ NETWORK_OPTIONS (vd ["applovin", "unity"]) -> trả về None
-    (không truyền filter "network" cho Metabase) -- SQL đã hardcode
-    `WHERE network IN ('APPLOVIN', 'UNITY')` nên bỏ trống filter "network"
-    (clause `[[AND network = {{network}}]]` bị skip) tự động trả về CẢ 2
-    network trong 1 query/1 DataFrame — xem comment trong SQL gốc.
-    List 1 phần tử -> coi như str (lọc riêng đúng network đó)."""
-    if isinstance(network_key, (list, tuple)):
-        if set(network_key) >= set(NETWORK_OPTIONS.keys()):
-            return None
-        if len(network_key) == 1:
-            network_key = network_key[0]
-        else:
-            raise ValueError(
-                "Metabase 'network' là Plain Variable, chỉ lọc được 1 giá trị hoặc "
-                "bỏ trống (không lọc) — không hỗ trợ lọc 1 tập con nhiều network. "
-                f"Truyền list ĐẦY ĐỦ {list(NETWORK_OPTIONS)} để lấy cả 2 network, "
-                "hoặc 1 network_key (str) để lọc riêng 1 network."
-            )
-    if network_key not in NETWORK_OPTIONS:
-        raise KeyError(f"network_key '{network_key}' không hợp lệ. Chọn 1 trong: {list(NETWORK_OPTIONS)}")
-    return NETWORK_OPTIONS[network_key]["metabase"]
+def get_metabase_network_value(network_key) -> list[str]:
+    """network_key: 1 key (str) hoặc list nhiều key.
+    Luôn trả về LIST giá trị Metabase tương ứng (kể cả khi chỉ 1 network) —
+    "network" trên card_id=81 giờ là Field Filter multi-select thật, PHẢI
+    truyền value dạng list (xem comment ở NETWORK_OPTIONS)."""
+    keys = [network_key] if isinstance(network_key, str) else list(network_key)
+    invalid = [k for k in keys if k not in NETWORK_OPTIONS]
+    if invalid:
+        raise KeyError(f"network_key không hợp lệ: {invalid}. Chọn trong: {list(NETWORK_OPTIONS)}")
+    return [NETWORK_OPTIONS[k]["metabase"] for k in keys]
 
 
 def get_adjust_extra_params(game_key: str, network_key) -> dict:
@@ -156,8 +152,8 @@ def get_adjust_extra_params(game_key: str, network_key) -> dict:
 
     network_key: 1 key (str) -> network__in = 1 giá trị Adjust tương ứng.
     list nhiều key (vd ["applovin", "unity"]) -> network__in = list nối bằng
-    dấu phẩy (Adjust hỗ trợ multi-value cho *__in), khớp với Metabase khi bỏ
-    trống filter "network" (xem get_metabase_network_value)."""
+    dấu phẩy (Adjust hỗ trợ multi-value cho *__in) — khớp với danh sách truyền
+    cho get_metabase_network_value() ở trên."""
     if game_key not in GAMES:
         raise KeyError(f"game_key '{game_key}' không tồn tại trong config.GAMES.")
     params = dict(GAMES[game_key]["adjust_extra_params"])  # copy, không sửa bản gốc trong GAMES

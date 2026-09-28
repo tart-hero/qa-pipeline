@@ -781,3 +781,98 @@ def plot_rel_diff_ecdf(detail: pd.DataFrame, metrics: list[str] | None = None) -
     print(pct_within_df.to_string(index=False))
     return pct_within_df
  
+
+ # ---------------------------------------------------------------------------
+# 8. Phân bố sai số TUYỆT ĐỐI (abs_diff) — dành cho ROAS
+# ---------------------------------------------------------------------------
+def _draw_abs_diff_hist(ax, sub: pd.Series, bins: int) -> None:
+    """Vẽ 1 ô histogram abs_diff (KHÔNG phải rel_diff_pct) — dùng cho metric
+    dạng tỷ lệ như ROAS, nơi độ lệch tuyệt đối ("điểm %") trực quan hơn % tương
+    đối (VD ROAS Metabase 20% vs Adjust 21% -> abs_diff = -1 điểm %, trong khi
+    rel_diff_pct = -4.76% dễ gây hiểu nhầm là "lệch 4.76 điểm %").
+ 
+    Trục X tự co theo dữ liệu thật (cùng lý do đã áp dụng cho _draw_rel_diff_hist
+    — không có ngưỡng cố định để so như rel_diff_pct nên càng cần co theo data,
+    nếu không cột sẽ dễ bị nén vô hình khi metric khớp gần tuyệt đối)."""
+    ax.hist(sub, bins=bins, color="steelblue", edgecolor="white")
+    _add_grid(ax)
+    ax.axvline(0, color="gray", linestyle="--", linewidth=1)
+    if len(sub) > 0:
+        data_min, data_max = float(sub.min()), float(sub.max())
+        spread = data_max - data_min
+        pad = max(spread * 0.15, 1e-6)
+        ax.set_xlim(data_min - pad, data_max + pad)
+ 
+ 
+def plot_abs_diff_histogram(
+    detail: pd.DataFrame,
+    metrics: list[str] | None = None,
+    bins: int = 30,
+    scale: float = 100,
+) -> None:
+    """[TẤT CẢ CAMPAIGN] Facet grid — 1 ô/metric, histogram phân bố abs_diff
+    (Metabase - Adjust). Mặc định chỉ vẽ các metric ROAS_* — abs_diff của
+    Cost/Installs/Revenue có đơn vị USD/số nguyên, không cùng thang đo với ROAS
+    (tỷ lệ), gộp chung sẽ khó đọc; truyền `metrics=[...]` nếu muốn xem metric khác.
+ 
+    `scale=100` (mặc định): nhân abs_diff lên 100 để đổi ROAS dạng thập phân
+    (VD 0.01) thành "điểm %" (VD 1.0) — dễ đọc hơn nhiều so với số thập phân
+    nhỏ. Đặt `scale=1` để giữ nguyên đơn vị gốc.
+    """
+    metrics = metrics or [m for m in config.METRIC_ORDER if m.startswith("ROAS_")]
+    valid = _valid(detail)
+    metrics_present = [m for m in metrics if m in valid["metric"].unique()]
+    if not metrics_present:
+        print("Không có metric nào có dữ liệu hợp lệ để vẽ.")
+        return
+ 
+    xlabel = "abs_diff (điểm %)" if scale == 100 else "abs_diff"
+ 
+    fig, axes = _facet_grid_axes(len(metrics_present))
+    for i, m in enumerate(metrics_present):
+        sub = (valid.loc[valid["metric"] == m, "abs_diff"] * scale).dropna()
+        _draw_abs_diff_hist(axes[i], sub, bins)
+        axes[i].set_title(f"{m}  (n={len(sub)})", fontsize=10)
+        axes[i].set_xlabel(xlabel)
+ 
+    fig.suptitle("Phân bố sai số tuyệt đối (abs_diff) theo Metric — TẤT CẢ CAMPAIGN")
+    plt.tight_layout()
+    plt.show()
+ 
+ 
+def plot_abs_diff_histogram_by_campaign(
+    detail: pd.DataFrame,
+    metric: str = "ROAS_D28",
+    campaigns: list[str] | None = None,
+    bins: int = 20,
+    scale: float = 100,
+) -> None:
+    """[THEO TỪNG CAMPAIGN] Facet grid — 1 ô/campaign, abs_diff cho ĐÚNG 1 metric
+    — song song với plot_rel_diff_histogram_by_campaign nhưng dùng abs_diff thay
+    rel_diff_pct. Hữu ích khi 1 campaign có Cost/Install rất nhỏ khiến
+    rel_diff_pct "nhảy" ảo (VD 1 install lệch trên nền 3 install = 33%) dù
+    chênh lệch tuyệt đối thực ra không đáng kể.
+ 
+    `scale=100`: xem docstring plot_abs_diff_histogram.
+    """
+    valid = _valid(detail)
+    valid = valid[valid["metric"] == metric]
+ 
+    if campaigns is None:
+        campaigns = sorted(valid["campaign"].unique())
+    if len(campaigns) > 12:
+        print(f"⚠️ CẢNH BÁO: đang vẽ {len(campaigns)} campaign cùng lúc, hình sẽ rất dài. "
+              f"Cân nhắc truyền `campaigns=[...]` để giới hạn lại.")
+ 
+    xlabel = "abs_diff (điểm %)" if scale == 100 else "abs_diff"
+ 
+    fig, axes = _facet_grid_axes(len(campaigns))
+    for i, c in enumerate(campaigns):
+        sub = (valid.loc[valid["campaign"] == c, "abs_diff"] * scale).dropna()
+        _draw_abs_diff_hist(axes[i], sub, bins)
+        axes[i].set_title(f"{c}\n(n={len(sub)})", fontsize=9)
+        axes[i].set_xlabel(xlabel)
+ 
+    fig.suptitle(f"Phân bố sai số tuyệt đối (abs_diff) theo Campaign — metric: {metric}")
+    plt.tight_layout()
+    plt.show()
