@@ -58,21 +58,28 @@ _ADJUST_EXTRA_PARAMS_DEFAULT = {
 # Adjust cùng lúc, vì 2 phía phải lọc cùng 1 network mới join được.
 # "revenue_scope" không còn cần thiết — SQL giờ LUÔN tính ROAS = ad + IAP.
 # ---------------------------------------------------------------------------
+# [CẬP NHẬT 2026-09-28] SQL card_id=81 thêm CTE `game_map` (owner tự sửa trực
+# tiếp trên Metabase) map (full_name, platform) -> tên hiển thị mới, và đổi
+# "game" từ Field Filter (dimension trên full_name) sang Plain Text variable
+# multi-select lọc theo CHÍNH tên hiển thị mới đó (`COALESCE(gm.game_name,
+# cohort_src.full_name) IN ({{game}})`) — "metabase_game" bên dưới PHẢI dùng
+# đúng tên hiển thị mới, "Game A"/"Game B"/"Game C" (full_name gốc) không còn
+# hợp lệ cho filter "game" nữa. Cột output `Game` trong df_mb cũng trả về tên
+# hiển thị mới này, không phải full_name gốc.
 GAMES = {
     "game_a_android": {
         "label": "Game A (CDS) — Android",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_CDS_ANDROID",
         "metabase_card_id": 81,
-        "metabase_game": "Game A",
+        "metabase_game": "Chaos Drink Sort Android (CDS Android)",
         "metabase_platform": "ANDROID",
         "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
     "game_b_ios": {
         "label": "Game B (CDS) — iOS",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_CDS_IOS",
-        # TODO: xác nhận lại card_id đúng cho Game B iOS nếu có Question riêng.
         "metabase_card_id": 81,
-        "metabase_game": "Game B",
+        "metabase_game": "Tap Sort Puzzle (CDS iOS)",
         "metabase_platform": "IOS",
         # TODO: xác nhận lại ad_revenue_sources cho Game B — tạm copy theo Game A.
         "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
@@ -80,17 +87,16 @@ GAMES = {
     "game_c_android": {
         "label": "Game C (BCE) — Android",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_BCE_ANDROID",
-        # TODO: xác nhận card_id đúng cho Game C — có thể không dùng chung mart/Question.
         "metabase_card_id": 81,
-        "metabase_game": "Game C",
+        "metabase_game": "Screw Block Escape (BCE Android)",
         "metabase_platform": "ANDROID",
         "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
     "game_c_ios": {
         "label": "Game C (BCE) — iOS",
         "adjust_app_token_env": "ADJUST_APP_TOKEN_BCE_IOS",
-        "metabase_card_id": 81,  # TODO: xác nhận lại, xem ghi chú ở game_c_android
-        "metabase_game": "Game C",
+        "metabase_card_id": 81,
+        "metabase_game": "Screw Block Escape (BCE iOS)",
         "metabase_platform": "IOS",
         "adjust_extra_params": dict(_ADJUST_EXTRA_PARAMS_DEFAULT, ad_revenue_sources="AppLovin Max"),
     },
